@@ -1,0 +1,154 @@
+# 1. Create project files
+mkdir -p public
+
+cat << 'EOF' > package.json
+{
+  "name": "paypilot",
+  "version": "1.0.0",
+  "description": "Minimal AI copilot for small-business invoicing using PayPal sandbox and LLM",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
+EOF
+
+cat << 'EOF' > invoices.json
+[
+  {
+    "id": "INV2-SAMPLE-001",
+    "invoice_number": "INV-1001",
+    "customer": "Ravi Kumar",
+    "email": "ravi@example.com",
+    "item": "40 Cotton Shirts",
+    "amount": 12000,
+    "currency": "INR",
+    "due_days": 7,
+    "due_date": "2026-11-05",
+    "created_at": "2026-10-29T10:00:00.000Z",
+    "status": "SENT"
+  },
+  {
+    "id": "INV2-SAMPLE-002",
+    "invoice_number": "INV-1002",
+    "customer": "Ravi Kumar",
+    "email": "ravi@example.com",
+    "item": "Bulk Fabric Rolls (Batch #2)",
+    "amount": 18500,
+    "currency": "INR",
+    "due_days": 7,
+    "due_date": "2026-11-01",
+    "created_at": "2026-10-25T14:30:00.000Z",
+    "status": "SENT"
+  },
+  {
+    "id": "INV2-SAMPLE-003",
+    "invoice_number": "INV-1003",
+    "customer": "Priya Sharma",
+    "email": "priya@craftdesign.io",
+    "item": "Brand Identity Design Package",
+    "amount": 850,
+    "currency": "USD",
+    "due_days": 7,
+    "due_date": "2026-11-08",
+    "created_at": "2026-11-01T09:15:00.000Z",
+    "status": "SENT"
+  },
+  {
+    "id": "INV2-SAMPLE-004",
+    "invoice_number": "INV-1004",
+    "customer": "David Chen",
+    "email": "david@chenconsulting.com",
+    "item": "Cloud Architecture Audit (10 hrs)",
+    "amount": 1500,
+    "currency": "USD",
+    "due_days": 15,
+    "due_date": "2026-11-25",
+    "created_at": "2026-11-10T11:00:00.000Z",
+    "status": "SENT"
+  },
+  {
+    "id": "INV2-SAMPLE-005",
+    "invoice_number": "INV-1005",
+    "customer": "Sarah Miller",
+    "email": "sarah@millerbakery.com",
+    "item": "POS Hardware & Setup",
+    "amount": 420,
+    "currency": "USD",
+    "due_days": 7,
+    "due_date": "2026-11-04",
+    "created_at": "2026-10-28T16:00:00.000Z",
+    "status": "PAID"
+  }
+]
+EOF
+
+cat << 'EOF' > server.js
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const INVOICES_FILE = path.join(__dirname, 'invoices.json');
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const PAYPAL_BASE = 'https://api-m.sandbox.paypal.com';
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || '';
+const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || '';
+const LLM_API_KEY = process.env.LLM_API_KEY || process.env.GEMINI_API_KEY || '';
+
+function readInvoices() {
+  try {
+    if (!fs.existsSync(INVOICES_FILE)) return [];
+    return JSON.parse(fs.readFileSync(INVOICES_FILE, 'utf8') || '[]');
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveInvoices(invoices) {
+  try {
+    fs.writeFileSync(INVOICES_FILE, JSON.stringify(invoices, null, 2), 'utf8');
+  } catch (err) {}
+}
+
+function isOverdue(inv) {
+  if (inv.status === 'PAID' || !inv.due_date) return false;
+  return new Date(inv.due_date + 'T23:59:59') < new Date();
+}
+
+function calculateCustomerRisks(invoices) {
+  const customerOverdues = {};
+  for (const inv of invoices) {
+    const cust = inv.customer.trim();
+    if (!customerOverdues[cust]) customerOverdues[cust] = 0;
+    if (isOverdue(inv)) customerOverdues[cust]++;
+  }
+  const risks = {};
+  for (const [cust, overdueCount] of Object.entries(customerOverdues)) {
+    if (overdueCount === 0) risks[cust] = 'Low';
+    else if (overdueCount === 1) risks[cust] = 'Medium';
+    else risks[cust] = 'High';
+  }
+  return risks;
+}
+
+async function getPayPalAccessToken() {
+  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) throw new Error('PayPal credentials missing');
+  const credentials = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${PAYPAL_BASE}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials'
+  });
+  if (!res.ok) throw new Error('PayPal OAuth failed');
+  const data = await res.json();
+  return data.access_
